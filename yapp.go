@@ -19,15 +19,14 @@ func main_() int {
 	var (
 		server     = flag.String("s", "localhost", "server")
 		port       = flag.Int("p", 80, "tcp port")
-		timeoutArg = flag.Int("t", 1000, "timeout in millisec")
+		timeoutArg = flag.Int("t", 500, "timeout in millisec")
 	)
 
 	flag.Parse()
 
-	var network = fmt.Sprintf("%s:%d", *server, *port)
 	var timeout = time.Duration(*timeoutArg) * time.Millisecond
 
-	return tryPort(ctx, network, timeout)
+	return tryPort(ctx, *server, *port, timeout)
 }
 
 func printf(ctx context.Context, format string, a ...interface{}) (n int, err error) {
@@ -39,9 +38,10 @@ func printf(ctx context.Context, format string, a ...interface{}) (n int, err er
 	return fmt.Printf(startTime.Format("[2006-01-02T15:04:05]: ")+format, a...)
 }
 
-func tryPort(ctx context.Context, network string, timeout time.Duration) int {
+func tryPort(ctx context.Context, server string, port int, timeout time.Duration) int {
 	startTime := time.Now()
 	ctx = context.WithValue(ctx, "startTime", startTime)
+	network := fmt.Sprintf("%s:%d", server, port)
 	conn, err := net.DialTimeout("tcp", network, timeout)
 	endTime := time.Now()
 	if err != nil {
