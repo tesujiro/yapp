@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"runtime"
 	"strings"
 	"time"
 )
@@ -48,7 +49,8 @@ func execute(command string) error {
 	var stdout bytes.Buffer
 	cmd.Stdout = &stdout
 
-	fmt.Println(command)
+	fmt.Println("$ ")
+	fmt.Println("$ " + command)
 	err := cmd.Run()
 	if err != nil {
 		fmt.Println(err)
@@ -59,15 +61,28 @@ func execute(command string) error {
 
 func ping(server string) error {
 
-	count := 5
-	command := fmt.Sprintf("ping -c %v -i 0.1 %s", count, server)
+	const count = 5
+
+	var command string
+	switch runtime.GOOS {
+	case "windows":
+		command = fmt.Sprintf("ping -n %v %s", count, server)
+	default:
+		command = fmt.Sprintf("ping -c %v -i 0.1 %s", count, server)
+	}
 
 	return execute(command)
 }
 
 func traceroute(server string) error {
 
-	command := fmt.Sprintf("traceroute -I %s", server)
+	var command string
+	switch runtime.GOOS {
+	case "windows":
+		command = fmt.Sprintf("tracert %s", server)
+	default:
+		command = fmt.Sprintf("traceroute -I %s", server)
+	}
 
 	return execute(command)
 }
