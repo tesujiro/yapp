@@ -1,11 +1,14 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"flag"
 	"fmt"
 	"net"
 	"os"
+	"os/exec"
+	"strings"
 	"time"
 )
 
@@ -38,6 +41,37 @@ func printf(ctx context.Context, format string, a ...interface{}) (n int, err er
 	return fmt.Printf(startTime.Format("[2006-01-02T15:04:05]: ")+format, a...)
 }
 
+func execute(command string) error {
+	args := strings.Split(command, " ")
+	cmd := exec.Command(args[0], args[1:]...)
+
+	var stdout bytes.Buffer
+	cmd.Stdout = &stdout
+
+	fmt.Println(command)
+	err := cmd.Run()
+	if err != nil {
+		fmt.Println(err)
+	}
+	fmt.Println(stdout.String())
+	return err
+}
+
+func ping(server string) error {
+
+	count := 5
+	command := fmt.Sprintf("ping -c %v -i 0.1 %s", count, server)
+
+	return execute(command)
+}
+
+func traceroute(server string) error {
+
+	command := fmt.Sprintf("traceroute -I %s", server)
+
+	return execute(command)
+}
+
 func tryPort(ctx context.Context, server string, port int, timeout time.Duration) int {
 	startTime := time.Now()
 	ctx = context.WithValue(ctx, "startTime", startTime)
@@ -46,6 +80,8 @@ func tryPort(ctx context.Context, server string, port int, timeout time.Duration
 	endTime := time.Now()
 	if err != nil {
 		printf(ctx, "Failed. error=%v\n", err)
+		ping(server)
+		traceroute(server)
 		return 1
 	}
 	defer conn.Close()
