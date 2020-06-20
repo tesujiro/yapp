@@ -30,7 +30,13 @@ func main_() int {
 
 	var timeout = time.Duration(*timeoutArg) * time.Millisecond
 
-	return tryPort(ctx, *server, *port, timeout)
+	err := tryPort(ctx, *server, *port, timeout)
+	if err != nil {
+		ping(*server)
+		traceroute(*server)
+		return 1
+	}
+	return 0
 }
 
 func printf(ctx context.Context, format string, a ...interface{}) (n int, err error) {
@@ -66,7 +72,7 @@ func ping(server string) error {
 	var command string
 	switch runtime.GOOS {
 	case "windows":
-		command = fmt.Sprintf("ping -n %v %s", count, server)
+		command = fmt.Sprintf("ping -n %v -w 100 %s", count, server)
 	default:
 		command = fmt.Sprintf("ping -c %v -i 0.1 %s", count, server)
 	}
@@ -79,15 +85,15 @@ func traceroute(server string) error {
 	var command string
 	switch runtime.GOOS {
 	case "windows":
-		command = fmt.Sprintf("tracert %s", server)
+		command = fmt.Sprintf("tracert -w 100 -h 15 -d %s", server)
 	default:
-		command = fmt.Sprintf("traceroute -I %s", server)
+		command = fmt.Sprintf("traceroute -w 1 -m 15 -I %s", server)
 	}
 
 	return execute(command)
 }
 
-func tryPort(ctx context.Context, server string, port int, timeout time.Duration) int {
+func tryPort(ctx context.Context, server string, port int, timeout time.Duration) error {
 	startTime := time.Now()
 	ctx = context.WithValue(ctx, "startTime", startTime)
 	network := fmt.Sprintf("%s:%d", server, port)
@@ -95,12 +101,12 @@ func tryPort(ctx context.Context, server string, port int, timeout time.Duration
 	endTime := time.Now()
 	if err != nil {
 		printf(ctx, "Failed. error=%v\n", err)
-		ping(server)
-		traceroute(server)
-		return 1
+		//ping(server)
+		//traceroute(server)
+		return err
 	}
 	defer conn.Close()
 	var t = float64(endTime.Sub(startTime)) / float64(time.Millisecond)
 	printf(ctx, "Connected. addr=%s time=%4.2fms\n", conn.RemoteAddr().String(), t)
-	return 0
+	return nil
 }
