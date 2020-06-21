@@ -4,12 +4,14 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/csv"
 	"flag"
 	"fmt"
 	"net"
 	"os"
 	"os/exec"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -21,15 +23,9 @@ func print(ctx context.Context, msg string) error {
 		fmt.Println("logger not found")
 		return fmt.Errorf("logger not found")
 	}
-	/*
-		logDone, ok := ctx.Value("logDone").(chan struct{})
-		if !ok {
-			fmt.Println("logger done channel not found")
-			return fmt.Errorf("logger done channel not found")
-		}
-	*/
+	//fmt.Printf("send msg to logger chan(%v): %v\n", logChan, msg)
 	logChan <- msg
-	//<-logDone
+	//fmt.Printf("send msg to logger: %v --> return\n", msg)
 	return nil
 }
 
@@ -80,7 +76,6 @@ func traceroute(ctx context.Context, server string) error {
 
 func tryPort(ctx context.Context, server string, port int) error {
 	startTime := time.Now()
-	//ctx = context.WithValue(ctx, "startTime", startTime)
 	network := fmt.Sprintf("%s:%d", server, port)
 	timeout, ok := ctx.Value("timeout").(time.Duration)
 	if !ok {
@@ -97,16 +92,26 @@ func tryPort(ctx context.Context, server string, port int) error {
 	return nil
 }
 
+type server struct {
+	host    string
+	port    int
+	comment string
+}
+
 func main_() int {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	var (
-		server     = flag.String("s", "localhost", "server")
-		port       = flag.Int("p", 80, "tcp port")
+		/*
+			server     = flag.String("s", "localhost", "server")
+			port       = flag.Int("p", 80, "tcp port")
+		*/
 		timeoutArg = flag.Int("t", 500, "timeout in millisec")
-		//list       = flag.String("f", "", "server list formatted in \"ServerName\\tPortNumber\\tComment\"")
+		list       = flag.String("f", "", "server list csv file formatted in \"ServerName\\tPortNumber\\tComment\"")
+		conc       = flag.Int("c", 5, "concurrency")
+		serverList = []server{}
 	)
 
 	flag.Parse()
@@ -114,49 +119,112 @@ func main_() int {
 	var timeout = time.Duration(*timeoutArg) * time.Millisecond
 	ctx = context.WithValue(ctx, "timeout", timeout)
 
+	// read server list
+	if *list != "" {
+		file, err := os.Open(*list)
+		if err != nil {
+			fmt.Println("Cannot open file: " + *list)
+			return 1
+		}
+		defer file.Close()
+
+		reader := csv.NewReader(file)
+		var line []string
+
+		for {
+			line, err = reader.Read()
+			if err != nil {
+				break
+			}
+			if len(line) != 3 {
+				fmt.Printf("csv format error: %v\n", line)
+				return 1
+			}
+			host := line[0]
+			port_str := line[1]
+			comment := line[2]
+			port, err := strconv.Atoi(port_str)
+			if err != nil {
+				fmt.Printf("csv format error: %v\n", line)
+				fmt.Println("port number error: " + port_str)
+				return 1
+			}
+			serverList = append(serverList, server{
+				host:    host,
+				port:    port,
+				comment: comment,
+			})
+
+		}
+		//fmt.Printf("serverList=%v\n", serverList)
+	}
+
 	wg := new(sync.WaitGroup)
 
 	// start logger goroutine
 	logChan := make(chan string)
+	//logChan := make(chan string, *conc)
 	ctx = context.WithValue(ctx, "logChan", logChan)
-	//logDone := make(chan struct{})
-	//ctx = context.WithValue(ctx, "logDone", logDone)
 	wg.Add(1)
-	go func() {
+	go func(logch chan string) {
 		for {
+
+			//fmt.Printf("logger: select logch:%v\n", logch)
 			select {
-			case outs := <-logChan:
-				//fmt.Println("get logChan: " + outs)
+			case outs := <-logch:
+				//fmt.Println("logger: received :" + outs)
 				sc := bufio.NewScanner(strings.NewReader(outs))
 				for sc.Scan() {
 					fmt.Println(time.Now().Format("[2006-01-02T15:04:05] ") + sc.Text())
 				}
-				//logDone <- struct{}{}
 			case <-ctx.Done():
 				wg.Done()
 				return
 			default:
 			}
 		}
-	}()
+	}(logChan)
 
-	err := tryPort(ctx, *server, *port)
-	if err != nil {
-		print(ctx, fmt.Sprintf("Failed. error=%v", err))
-		err = ping(ctx, *server)
-		if err != nil {
-			print(ctx, fmt.Sprintf("%v", err))
-		}
-		err = traceroute(ctx, *server)
-		if err != nil {
-			print(ctx, fmt.Sprintf("%v", err))
-		}
-		cancel()
-		wg.Wait()
-		return 1
+	// start ping goroutines
+	wg2 := new(sync.WaitGroup)
+	if len(serverList) < *conc {
+		*conc = len(serverList)
 	}
+	reqChan := make(chan server)
+	for i := 0; i < *conc; i++ {
+		wg2.Add(1)
+		go func() {
+			for svr := range reqChan {
+				err := tryPort(ctx, svr.host, svr.port)
+				if err != nil {
+					print(ctx, fmt.Sprintf("Failed. error=%v", err))
+					err = ping(ctx, svr.host)
+					if err != nil {
+						print(ctx, fmt.Sprintf("%v", err))
+					}
+					err = traceroute(ctx, svr.host)
+					if err != nil {
+						print(ctx, fmt.Sprintf("%v", err))
+					}
+				}
+			}
+			wg2.Done()
+		}()
+	}
+
+	// send request to ping goroutines
+	for _, svr := range serverList {
+		reqChan <- svr
+	}
+
+	// wait for all ping goroutines finished
+	close(reqChan)
+	wg2.Wait()
+
+	// wait for logging goroutine finished
 	cancel()
 	wg.Wait()
+
 	return 0
 }
 
