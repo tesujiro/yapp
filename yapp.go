@@ -14,13 +14,19 @@ import (
 	"time"
 )
 
-//func print(ctx context.Context, format string, a ...interface{}) error {
 func print(ctx context.Context, msg string) error {
 	logChan, ok := ctx.Value("logChan").(chan string)
 	if !ok {
-		return fmt.Errorf("logger not founc")
+		fmt.Println("logger not found")
+		return fmt.Errorf("logger not found")
 	}
-	logChan <- fmt.Sprintf(time.Now().Format("[2006-01-02T15:04:05] ") + msg)
+	logDone, ok := ctx.Value("logDone").(chan struct{})
+	if !ok {
+		fmt.Println("logger done channel not found")
+		return fmt.Errorf("logger done channel not found")
+	}
+	logChan <- msg
+	<-logDone
 	return nil
 }
 
@@ -37,10 +43,7 @@ func execute(ctx context.Context, command string) error {
 	if err != nil {
 		print(ctx, fmt.Sprint(err))
 	}
-	sc := bufio.NewScanner(strings.NewReader(stdout.String()))
-	for sc.Scan() {
-		print(ctx, sc.Text())
-	}
+	print(ctx, stdout.String())
 	return err
 }
 
@@ -111,11 +114,17 @@ func main_() int {
 	// start logger goroutine
 	logChan := make(chan string)
 	ctx = context.WithValue(ctx, "logChan", logChan)
+	logDone := make(chan struct{})
+	ctx = context.WithValue(ctx, "logDone", logDone)
 	go func() {
 		for {
 			select {
 			case outs := <-logChan:
-				fmt.Println(outs)
+				sc := bufio.NewScanner(strings.NewReader(outs))
+				for sc.Scan() {
+					fmt.Println(time.Now().Format("[2006-01-02T15:04:05] ") + sc.Text())
+				}
+				logDone <- struct{}{}
 			case <-ctx.Done():
 				return
 			default:
