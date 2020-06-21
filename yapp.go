@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -20,13 +21,15 @@ func print(ctx context.Context, msg string) error {
 		fmt.Println("logger not found")
 		return fmt.Errorf("logger not found")
 	}
-	logDone, ok := ctx.Value("logDone").(chan struct{})
-	if !ok {
-		fmt.Println("logger done channel not found")
-		return fmt.Errorf("logger done channel not found")
-	}
+	/*
+		logDone, ok := ctx.Value("logDone").(chan struct{})
+		if !ok {
+			fmt.Println("logger done channel not found")
+			return fmt.Errorf("logger done channel not found")
+		}
+	*/
 	logChan <- msg
-	<-logDone
+	//<-logDone
 	return nil
 }
 
@@ -111,21 +114,26 @@ func main_() int {
 	var timeout = time.Duration(*timeoutArg) * time.Millisecond
 	ctx = context.WithValue(ctx, "timeout", timeout)
 
+	wg := new(sync.WaitGroup)
+
 	// start logger goroutine
 	logChan := make(chan string)
 	ctx = context.WithValue(ctx, "logChan", logChan)
-	logDone := make(chan struct{})
-	ctx = context.WithValue(ctx, "logDone", logDone)
+	//logDone := make(chan struct{})
+	//ctx = context.WithValue(ctx, "logDone", logDone)
+	wg.Add(1)
 	go func() {
 		for {
 			select {
 			case outs := <-logChan:
+				//fmt.Println("get logChan: " + outs)
 				sc := bufio.NewScanner(strings.NewReader(outs))
 				for sc.Scan() {
 					fmt.Println(time.Now().Format("[2006-01-02T15:04:05] ") + sc.Text())
 				}
-				logDone <- struct{}{}
+				//logDone <- struct{}{}
 			case <-ctx.Done():
+				wg.Done()
 				return
 			default:
 			}
@@ -143,8 +151,12 @@ func main_() int {
 		if err != nil {
 			print(ctx, fmt.Sprintf("%v", err))
 		}
+		cancel()
+		wg.Wait()
 		return 1
 	}
+	cancel()
+	wg.Wait()
 	return 0
 }
 
