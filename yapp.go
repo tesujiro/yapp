@@ -23,9 +23,7 @@ func print(ctx context.Context, msg string) error {
 		fmt.Println("logger not found")
 		return fmt.Errorf("logger not found")
 	}
-	//fmt.Printf("send msg to logger chan(%v): %v\n", logChan, msg)
 	logChan <- msg
-	//fmt.Printf("send msg to logger: %v --> return\n", msg)
 	return nil
 }
 
@@ -185,11 +183,29 @@ func main_() int {
 		}
 	}(logChan)
 
-	// start ping goroutines
-	wg2 := new(sync.WaitGroup)
 	if len(serverList) < *conc {
 		*conc = len(serverList)
 	}
+
+	// start cache check goroutine
+	checkServerChan := make(chan server)
+	alreadyCheckedChan := make(chan bool)
+	go func() {
+		checkedServer := make(map[string]bool)
+		var yet bool
+		for s := range checkServerChan {
+			if checkedServer[s.host] {
+				yet = true
+			} else {
+				yet = false
+				checkedServer[s.host] = true
+			}
+			alreadyCheckedChan <- yet
+		}
+	}()
+
+	// start port ping goroutines
+	wg2 := new(sync.WaitGroup)
 	reqChan := make(chan server)
 	for i := 0; i < *conc; i++ {
 		wg2.Add(1)
@@ -198,13 +214,16 @@ func main_() int {
 				err := tryPort(ctx, svr.host, svr.port)
 				if err != nil {
 					print(ctx, fmt.Sprintf("Failed. error=%v", err))
-					err = ping(ctx, svr.host)
-					if err != nil {
-						print(ctx, fmt.Sprintf("%v", err))
-					}
-					err = traceroute(ctx, svr.host)
-					if err != nil {
-						print(ctx, fmt.Sprintf("%v", err))
+					checkServerChan <- svr
+					if !<-alreadyCheckedChan {
+						err = ping(ctx, svr.host)
+						if err != nil {
+							print(ctx, fmt.Sprintf("%v", err))
+						}
+						err = traceroute(ctx, svr.host)
+						if err != nil {
+							print(ctx, fmt.Sprintf("%v", err))
+						}
 					}
 				}
 			}
