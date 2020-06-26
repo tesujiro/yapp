@@ -5,8 +5,10 @@ import (
 	"bytes"
 	"context"
 	"encoding/csv"
+	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"os/exec"
@@ -34,13 +36,12 @@ func execute(ctx context.Context, command string) error {
 	var stdout bytes.Buffer
 	cmd.Stdout = &stdout
 
-	print(ctx, "")
-	print(ctx, fmt.Sprint("$ "+command))
+	cmdline := fmt.Sprintf("\n$ %v\n", command)
 	err := cmd.Run()
 	if err != nil {
-		print(ctx, fmt.Sprint(err))
+		print(ctx, cmdline+fmt.Sprint(err))
 	}
-	print(ctx, stdout.String())
+	print(ctx, cmdline+stdout.String())
 	return err
 }
 
@@ -81,12 +82,13 @@ func tryPort(ctx context.Context, server string, port int) error {
 	}
 	conn, err := net.DialTimeout("tcp", network, timeout)
 	endTime := time.Now()
+	var t = float64(endTime.Sub(startTime)) / float64(time.Millisecond)
 	if err != nil {
+		print(ctx, fmt.Sprintf("Connection failed.\tserver=%v port=%v time=%4.2fms error=%v", server, port, t, err))
 		return err
 	}
 	defer conn.Close()
-	var t = float64(endTime.Sub(startTime)) / float64(time.Millisecond)
-	print(ctx, fmt.Sprintf("Connected. addr=%s time=%4.2fms", conn.RemoteAddr().String(), t))
+	print(ctx, fmt.Sprintf("Connection succeeded.\tserver=%v port=%v time=%4.2fms", server, port, t))
 	return nil
 }
 
@@ -94,6 +96,49 @@ type server struct {
 	host    string
 	port    int
 	comment string
+}
+
+func readCsv(filepath string) ([]server, error) {
+	if filepath == "" {
+		return nil, nil
+	}
+
+	file, err := os.Open(filepath)
+	if err != nil {
+		return nil, errors.New("Cannot open file: " + filepath)
+	}
+	defer file.Close()
+
+	reader := csv.NewReader(file)
+	var line []string
+
+	serverList := []server{}
+	for {
+		line, err = reader.Read()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, fmt.Errorf("csv read error: %v\n", err)
+		}
+		if len(line) != 3 {
+			return nil, fmt.Errorf("csv format error: %v\n", line)
+		}
+		host := line[0]
+		port_str := line[1]
+		comment := line[2]
+		port, err := strconv.Atoi(port_str)
+		if err != nil {
+			fmt.Println("port number error: " + port_str)
+			return nil, fmt.Errorf("csv format error: %v\n", line)
+		}
+		serverList = append(serverList, server{
+			host:    host,
+			port:    port,
+			comment: comment,
+		})
+	}
+	return serverList, nil
 }
 
 func main_() int {
@@ -109,7 +154,6 @@ func main_() int {
 		timeoutArg = flag.Int("t", 500, "timeout in millisec")
 		list       = flag.String("f", "", "server list csv file formatted in \"ServerName\\tPortNumber\\tComment\"")
 		conc       = flag.Int("c", 5, "concurrency")
-		serverList = []server{}
 	)
 
 	flag.Parse()
@@ -118,43 +162,10 @@ func main_() int {
 	ctx = context.WithValue(ctx, "timeout", timeout)
 
 	// read server list
-	if *list != "" {
-		file, err := os.Open(*list)
-		if err != nil {
-			fmt.Println("Cannot open file: " + *list)
-			return 1
-		}
-		defer file.Close()
-
-		reader := csv.NewReader(file)
-		var line []string
-
-		for {
-			line, err = reader.Read()
-			if err != nil {
-				break
-			}
-			if len(line) != 3 {
-				fmt.Printf("csv format error: %v\n", line)
-				return 1
-			}
-			host := line[0]
-			port_str := line[1]
-			comment := line[2]
-			port, err := strconv.Atoi(port_str)
-			if err != nil {
-				fmt.Printf("csv format error: %v\n", line)
-				fmt.Println("port number error: " + port_str)
-				return 1
-			}
-			serverList = append(serverList, server{
-				host:    host,
-				port:    port,
-				comment: comment,
-			})
-
-		}
-		//fmt.Printf("serverList=%v\n", serverList)
+	serverList, err := readCsv(*list)
+	if err != nil {
+		fmt.Printf("error: %v\n", err)
+		return 1
 	}
 
 	wg := new(sync.WaitGroup)
@@ -213,7 +224,6 @@ func main_() int {
 			for svr := range reqChan {
 				err := tryPort(ctx, svr.host, svr.port)
 				if err != nil {
-					print(ctx, fmt.Sprintf("Failed. error=%v", err))
 					checkServerChan <- svr
 					if !<-alreadyCheckedChan {
 						err = ping(ctx, svr.host)
