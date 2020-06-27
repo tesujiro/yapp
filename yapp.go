@@ -45,6 +45,30 @@ func execute(ctx context.Context, command string) error {
 	return err
 }
 
+func showConfig(ctx context.Context) error {
+
+	var command string
+	switch runtime.GOOS {
+	case "windows":
+		command = fmt.Sprintf("ipconfig")
+	default:
+		command = fmt.Sprintf("ifconfig -a")
+	}
+	err := execute(ctx, command)
+	if err != nil {
+		return err
+	}
+
+	switch runtime.GOOS {
+	case "windows":
+		command = fmt.Sprintf("route PRINT")
+	default:
+		command = fmt.Sprintf("route")
+	}
+	return execute(ctx, command)
+
+}
+
 func ping(ctx context.Context, server string) error {
 
 	const count = 5
@@ -168,6 +192,10 @@ func main_() int {
 		return 1
 	}
 
+	if len(serverList) < *conc {
+		*conc = len(serverList)
+	}
+
 	wg := new(sync.WaitGroup)
 
 	// start logger goroutine
@@ -194,8 +222,10 @@ func main_() int {
 		}
 	}(logChan)
 
-	if len(serverList) < *conc {
-		*conc = len(serverList)
+	// show config
+	if err := showConfig(ctx); err != nil {
+		fmt.Println(err)
+		return 1
 	}
 
 	// start cache check goroutine
