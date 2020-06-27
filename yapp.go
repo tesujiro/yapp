@@ -223,7 +223,7 @@ func main_() int {
 		go func() {
 			for svr := range reqChan {
 				err := tryPort(ctx, svr.host, svr.port)
-				if err != nil {
+				if err != nil && err.(*net.OpError).Timeout() {
 					checkServerChan <- svr
 					if !<-alreadyCheckedChan {
 						err = ping(ctx, svr.host)
