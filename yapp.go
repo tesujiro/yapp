@@ -62,6 +62,8 @@ func showConfig(ctx context.Context) error {
 	switch runtime.GOOS {
 	case "windows":
 		command = fmt.Sprintf("route PRINT")
+	case "darwin":
+		command = fmt.Sprintf("netstat -rn")
 	default:
 		command = fmt.Sprintf("route")
 	}
@@ -204,6 +206,7 @@ func main_() int {
 	ctx = context.WithValue(ctx, "logChan", logChan)
 	wg.Add(1)
 	go func(logch chan string) {
+		hostname, _ := os.Hostname()
 		for {
 
 			//fmt.Printf("logger: select logch:%v\n", logch)
@@ -212,7 +215,7 @@ func main_() int {
 				//fmt.Println("logger: received :" + outs)
 				sc := bufio.NewScanner(strings.NewReader(outs))
 				for sc.Scan() {
-					fmt.Println(time.Now().Format("[2006-01-02T15:04:05] ") + sc.Text())
+					fmt.Println(time.Now().Format("[2006/01/02 15:04:05 ") + hostname + "] " + sc.Text())
 				}
 			case <-ctx.Done():
 				wg.Done()
